@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use crate::opcodes::{self, OpCode};
+use std::collections::HashMap;
 pub struct CPU {
     pub register_a: u8,
     pub register_x: u8,
@@ -19,15 +19,19 @@ pub enum AddressingMode {
     Absolute,
     Absolute_X,
     Absolute_Y,
+    // Indirect,
     Indirect_X,
     Indirect_Y,
+    Accumulator,
+    Relative,
+    // Implied,
     NoneAddressing,
 }
 
 trait Mem {
     fn mem_read(&self, addr: u16) -> u8;
 
-    fn mem_write(&mut self, addr: u16,data:u8);
+    fn mem_write(&mut self, addr: u16, data: u8);
     fn mem_read_u16(&self, pos: u16) -> u16 {
         let lo = self.mem_read(pos) as u16;
         let hi = self.mem_read(pos + 1) as u16;
@@ -47,7 +51,7 @@ impl Mem for CPU {
         self.memory[addr as usize]
     }
 
-    fn mem_write(&mut self, addr: u16, data: u8) { 
+    fn mem_write(&mut self, addr: u16, data: u8) {
         self.memory[addr as usize] = data;
     }
 }
@@ -60,7 +64,7 @@ impl CPU {
             register_y: 0,
             status: 0,
             program_counter: 0,
-            memory: [0; 0xFFFF]
+            memory: [0; 0xFFFF],
         }
     }
     fn get_operand_address(&self, mode: &AddressingMode) -> u16 {
@@ -75,23 +79,23 @@ impl CPU {
                 let pos = self.mem_read(self.program_counter);
                 let addr = pos.wrapping_add(self.register_x) as u16;
                 addr
-            },
+            }
             AddressingMode::ZeroPage_Y => {
                 let pos = self.mem_read(self.program_counter);
                 let addr = pos.wrapping_add(self.register_y) as u16;
                 addr
-            },
+            }
 
             AddressingMode::Absolute_X => {
                 let base = self.mem_read_u16(self.program_counter);
                 let addr = base.wrapping_add(self.register_x as u16);
                 addr
-            },
+            }
             AddressingMode::Absolute_Y => {
                 let base = self.mem_read_u16(self.program_counter);
                 let addr = base.wrapping_add(self.register_y as u16);
                 addr
-            },
+            }
 
             AddressingMode::Indirect_X => {
                 let base = self.mem_read(self.program_counter);
@@ -100,7 +104,16 @@ impl CPU {
                 let lo = self.mem_read(ptr as u16);
                 let hi = self.mem_read(ptr.wrapping_add(1) as u16);
                 (hi as u16) << 8 | (lo as u16)
-            },
+            }
+            // AddressingMode::Indirect => {
+            //     let base = self.mem_read(self.program_counter);
+            //     let lo = self.mem_read(base as u16);
+            //     let hi = self.mem_read((base as u8).wrapping_add(1) as u16);
+            //     let deref_base = (hi as u16) << 8 | (lo as u16);
+            //     let deref_lo = self.mem_read(deref_base);
+            //     let deref_hi = self.mem_read(deref_base.wrapping_add(1));
+            //     (deref_hi as u16) << 8 | (deref_lo as u16)
+            // }
             AddressingMode::Indirect_Y => {
                 let base = self.mem_read(self.program_counter);
                 let lo = self.mem_read(base as u16);
@@ -108,8 +121,16 @@ impl CPU {
                 let deref_base = (hi as u16) << 8 | (lo as u16);
                 let deref = deref_base.wrapping_add(self.register_y as u16);
                 deref
-            },
-
+            }
+            AddressingMode::Accumulator => self.register_a as u16,
+            // AddressingMode::Implied => {
+            //     panic!("mode {:?} is not supported.", mode);
+            // }
+            AddressingMode::Relative => {
+                let offset = self.mem_read(self.program_counter);
+                let addr = offset.wrapping_add(self.program_counter as u8);
+                addr as u16
+            }
             AddressingMode::NoneAddressing => {
                 panic!("mode {:?} is not supported.", mode);
             }
@@ -133,7 +154,7 @@ impl CPU {
         self.memory[0x8000..(0x8000 + program.len())].copy_from_slice(&program[..]);
         self.mem_write_u16(0xFFFC, 0x8000);
     }
-    
+
     //code writen about opcode
     fn lda(&mut self, mode: &AddressingMode) {
         let addr = self.get_operand_address(mode);
@@ -152,10 +173,27 @@ impl CPU {
         self.update_zero_and_negative_flags(self.register_x);
     }
 
+    fn and(&mut self, mode: &AddressingMode) {
+        let addr = self.get_operand_address(mode);
+        self.register_a = self.register_a & self.mem_read(addr);
+        self.update_zero_and_negative_flags(self.register_a)
+    }
+
     fn sta(&mut self, mode: &AddressingMode) {
         let addr = self.get_operand_address(mode);
         let data = self.register_a;
         self.mem_write(addr, data);
+    }
+    //めっちゃ間違ってるadc
+    fn adc(&mut self, mode: &AddressingMode) {
+        let addr = self.get_operand_address(mode);
+        let val = self.mem_read(addr);
+        let carry = self.status & 0b0000_0001;
+        let data = self.register_a;
+        let (mut res, carrying) = val.overflowing_add(data);
+        res = val.overflowing_add(carry);
+        self.register_a = res;
+        update_zero_and_negative_flags(self.register_a);
     }
 
     fn update_zero_and_negative_flags(&mut self, result: u8) {
@@ -181,14 +219,18 @@ impl CPU {
             self.program_counter += 1;
             let program_counter_state = self.program_counter;
 
-            let opcode = opcodes.get(&code).expect(&format!("OpCode {:x} is not recognized.", code));
+            let opcode = opcodes
+                .get(&code)
+                .expect(&format!("OpCode {:x} is not recognized.", code));
             match code {
                 0xA9 | 0xA5 | 0xB5 | 0xAD | 0xBD | 0xB9 | 0xA1 | 0xB1 => {
                     self.lda(&opcode.mode);
                 }
-
                 0x85 | 0x95 | 0x8D | 0x9D | 0x99 | 0x81 | 0x91 => {
                     self.sta(&opcode.mode);
+                }
+                0x29 | 0x25 | 0x35 | 0x2D | 0x3D | 0x39 | 0x21 | 0x31 => {
+                    self.and(&opcode.mode);
                 }
                 0xAA => self.tax(),
                 0xE8 => self.inx(),
@@ -207,14 +249,14 @@ impl CPU {
 mod test {
     use super::*;
     #[test]
-   fn test_lda_from_memory() {
-       let mut cpu = CPU::new();
-       cpu.mem_write(0x10, 0x55);
+    fn test_lda_from_memory() {
+        let mut cpu = CPU::new();
+        cpu.mem_write(0x10, 0x55);
 
-       cpu.load_and_run(vec![0xa5, 0x10, 0x00]);
+        cpu.load_and_run(vec![0xa5, 0x10, 0x00]);
 
-       assert_eq!(cpu.register_a, 0x55);
-   }
+        assert_eq!(cpu.register_a, 0x55);
+    }
 
     #[test]
     fn test_0xa9_lda_immediate_load_data() {
@@ -254,5 +296,19 @@ mod test {
         //cpu.register_x = 0xFF;
         cpu.load_and_run(vec![0xA9, 0xFF, 0xAA, 0xE8, 0xE8, 0x00]);
         assert_eq!(cpu.register_x, 1);
+    }
+    #[test]
+    fn test_and_zeroflag() {
+        let mut cpu = CPU::new();
+        //cpu.register_x = 0xFF;
+        cpu.load_and_run(vec![0xA9, 0x00, 0x29, 0x01]);
+        assert!(cpu.status & 0b0000_0010 == 0b10);
+    }
+    #[test]
+    fn test_0xa9_and() {
+        let mut cpu = CPU::new();
+        //cpu.register_x = 0xFF;
+        cpu.load_and_run(vec![0xA9, 0xFF, 0x29, 0x01]);
+        assert_eq!(cpu.register_a, 0x01);
     }
 }
