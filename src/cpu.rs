@@ -167,12 +167,34 @@ impl CPU {
         self.register_x = self.register_a;
         self.update_zero_and_negative_flags(self.register_x);
     }
+    fn tay(&mut self) {
+        self.register_y = self.register_a;
+        self.update_zero_and_negative_flags(self.register_y);
+    }
+    fn tya(&mut self) {
+        self.register_a = self.register_y;
+        self.update_zero_and_negative_flags(self.register_a);
+    }
+    fn txa(&mut self) {
+        self.register_a = self.register_x;
+        self.update_zero_and_negative_flags(self.register_a);
+    }
 
     fn inx(&mut self) {
         self.register_x = self.register_x.wrapping_add(1);
         self.update_zero_and_negative_flags(self.register_x);
     }
-
+    fn iny(&mut self) {
+        self.register_y = self.register_x.wrapping_add(1);
+        self.update_zero_and_negative_flags(self.register_y);
+    }
+    fn inc(&mut self, mode: &AddressingMode) {
+        let addr = self.get_operand_address(mode);
+        let val = self.mem_read(addr);
+        let data = val.wrapping_add(1);
+        self.mem_write(addr, data);
+        self.update_zero_and_negative_flags(data);
+    }
     fn and(&mut self, mode: &AddressingMode) {
         let addr = self.get_operand_address(mode);
         self.register_a = self.register_a & self.mem_read(addr);
@@ -191,9 +213,20 @@ impl CPU {
         let carry = self.status & 0b0000_0001;
         let data = self.register_a;
         let (mut res, carrying) = val.overflowing_add(data);
-        res = val.overflowing_add(carry);
+        let mut carrying2;
+        (res, carrying2) = val.overflowing_add(carry);
+        if carrying || carrying2 {
+            self.status |= 0b0000_0001;
+        } else {
+            self.status = self.status & !(0b0000_0001);
+        }
+        if val & 0b1000_0000 != 0 && data & 0b1000_0000 != 0 && res & 0b1000_0000 == 0 {
+            self.status |= 0b0100_0000;
+        } else if val & 0b1000_0000 == 0 && data & 0b1000_0000 == 0 && res & 0b1000_0000 != 0 {
+            self.status |= 0b0100_0000;
+        }
         self.register_a = res;
-        update_zero_and_negative_flags(self.register_a);
+        self.update_zero_and_negative_flags(self.register_a);
     }
 
     fn update_zero_and_negative_flags(&mut self, result: u8) {
@@ -232,8 +265,18 @@ impl CPU {
                 0x29 | 0x25 | 0x35 | 0x2D | 0x3D | 0x39 | 0x21 | 0x31 => {
                     self.and(&opcode.mode);
                 }
+                0x69 | 0x65 | 0x75 | 0x6D | 0x7D | 0x79 | 0x61 | 0x71 => {
+                    self.adc(&opcode.mode);
+                }
                 0xAA => self.tax(),
+                0x8A => self.txa(),
+                0xA8 => self.tay(),
+                0x98 => self.tya(),
                 0xE8 => self.inx(),
+                0xC8 => self.iny(),
+                0xE6 | 0xF6 | 0xEE | 0xFE => {
+                    self.inc(&opcode.mode);
+                }
                 0x00 => return,
                 _ => todo!(),
             }
@@ -310,5 +353,15 @@ mod test {
         //cpu.register_x = 0xFF;
         cpu.load_and_run(vec![0xA9, 0xFF, 0x29, 0x01]);
         assert_eq!(cpu.register_a, 0x01);
+    }
+    #[test]
+    fn test_0x6d_adc() {
+        let mut cpu = CPU::new();
+        //cpu.register_x = 0xFF;
+        cpu.load_and_run(vec![
+            0xA9, 0x01, 0x8d, 0x02, 0x00, 0xa9, 0x0f, 0x6d, 0x02, 0x00, 0x8d, 0x00, 0x00, 0x6d,
+            0x00, 0x00, 0x00,
+        ]);
+        assert_eq!(cpu.register_a, 0x10);
     }
 }
