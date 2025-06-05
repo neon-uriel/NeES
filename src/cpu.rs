@@ -6,7 +6,7 @@ pub struct CPU {
     pub register_y: u8,
     pub status: u8,
     pub program_counter: u16,
-    memory: [u8; 0xFFFF],
+    memory: [u8; 0x10000], // 64K memory
 }
 
 #[derive(Debug)]
@@ -64,7 +64,7 @@ impl CPU {
             register_y: 0,
             status: 0,
             program_counter: 0,
-            memory: [0; 0xFFFF],
+            memory: [0 as u8; 0x10000],
         }
     }
     fn get_operand_address(&self, mode: &AddressingMode) -> u16 {
@@ -163,6 +163,25 @@ impl CPU {
         self.update_zero_and_negative_flags(self.register_a);
     }
 
+    fn ldx(&mut self, mode: &AddressingMode) {
+        let addr = self.get_operand_address(mode);
+        let value = self.mem_read(addr);
+        self.register_x = value;
+        self.update_zero_and_negative_flags(self.register_x);
+    }
+
+    fn ldy(&mut self, mode: &AddressingMode) {
+        let addr = self.get_operand_address(mode);
+        let value = self.mem_read(addr);
+        self.register_y = value;
+        self.update_zero_and_negative_flags(self.register_y);
+    }
+
+    fn sta(&mut self, mode: &AddressingMode) {
+        let addr = self.get_operand_address(mode);
+        self.mem_write(addr, self.register_a);
+    }
+
     fn tax(&mut self) {
         self.register_x = self.register_a;
         self.update_zero_and_negative_flags(self.register_x);
@@ -185,7 +204,7 @@ impl CPU {
         self.update_zero_and_negative_flags(self.register_x);
     }
     fn iny(&mut self) {
-        self.register_y = self.register_x.wrapping_add(1);
+        self.register_y = self.register_y.wrapping_add(1);
         self.update_zero_and_negative_flags(self.register_y);
     }
     fn inc(&mut self, mode: &AddressingMode) {
@@ -198,34 +217,65 @@ impl CPU {
     fn and(&mut self, mode: &AddressingMode) {
         let addr = self.get_operand_address(mode);
         self.register_a = self.register_a & self.mem_read(addr);
-        self.update_zero_and_negative_flags(self.register_a)
+        self.update_zero_and_negative_flags(self.register_a);
     }
 
-    fn sta(&mut self, mode: &AddressingMode) {
-        let addr = self.get_operand_address(mode);
-        let data = self.register_a;
-        self.mem_write(addr, data);
-    }
-    //めっちゃ間違ってるadc
     fn adc(&mut self, mode: &AddressingMode) {
         let addr = self.get_operand_address(mode);
         let val = self.mem_read(addr);
-        let carry = self.status & 0b0000_0001;
-        let data = self.register_a;
-        let (mut res, carrying) = val.overflowing_add(data);
-        let mut carrying2;
-        (res, carrying2) = val.overflowing_add(carry);
-        if carrying || carrying2 {
+        let carry_in = (self.status & 0b0000_0001) as u8;
+        let old_a = self.register_a;
+        let sum = old_a as u16 + val as u16 + carry_in as u16;
+        let final_res = sum as u8;
+        self.register_a = final_res;
+        if sum > 0xFF {
             self.status |= 0b0000_0001;
         } else {
-            self.status = self.status & !(0b0000_0001);
+            self.status &= !0b0000_0001;
         }
-        if val & 0b1000_0000 != 0 && data & 0b1000_0000 != 0 && res & 0b1000_0000 == 0 {
+        if (old_a ^ final_res) & (val ^ final_res) & 0b1000_0000 != 0 {
             self.status |= 0b0100_0000;
-        } else if val & 0b1000_0000 == 0 && data & 0b1000_0000 == 0 && res & 0b1000_0000 != 0 {
-            self.status |= 0b0100_0000;
+        } else {
+            self.status &= !0b0100_0000;
         }
-        self.register_a = res;
+        self.update_zero_and_negative_flags(self.register_a);
+    }
+
+    fn asl(&mut self, mode: &AddressingMode){
+        let target_addr:Option<u16>;
+        let mut data;
+        match mode {
+            AddressingMode::Accumulator => {
+                data = self.register_a;
+                target_addr = None;
+            }
+            _ => {
+                let addr = self.get_operand_address(mode);
+                data = self.mem_read(addr);
+                target_addr = Some(addr);
+            }         
+        }
+        if (data & 0b1000_0000) != 1{
+            self.status |= 0b0000_0001;
+        }else {
+            self.status &= !0b0000_0001;
+        }
+        let res = data << 1;
+
+        match target_addr {
+            Some(addr) => {
+                self.mem_write(addr,res);
+            }
+            None => {
+                self.register_a = res;
+            }
+        }
+        self.update_zero_and_negative_flags(self.register_a);
+    }
+
+    fn ora(&mut self, mode: &AddressingMode) {
+        let addr = self.get_operand_address(mode);
+        self.register_a = self.register_a | self.mem_read(addr);
         self.update_zero_and_negative_flags(self.register_a);
     }
 
@@ -259,14 +309,26 @@ impl CPU {
                 0xA9 | 0xA5 | 0xB5 | 0xAD | 0xBD | 0xB9 | 0xA1 | 0xB1 => {
                     self.lda(&opcode.mode);
                 }
+                0xA2 | 0xA6 | 0xB6 | 0xAE | 0xBE => {
+                    self.ldx(&opcode.mode);
+                }
+                0xA0 | 0xA4 | 0xB4 | 0xAC | 0xBC => {
+                    self.ldy(&opcode.mode);
+                }
                 0x85 | 0x95 | 0x8D | 0x9D | 0x99 | 0x81 | 0x91 => {
                     self.sta(&opcode.mode);
                 }
                 0x29 | 0x25 | 0x35 | 0x2D | 0x3D | 0x39 | 0x21 | 0x31 => {
                     self.and(&opcode.mode);
                 }
+                0x09 | 0x05 | 0x15 | 0x0D | 0x1D | 0x19 | 0x01 | 0x11 => {
+                    self.ora(&opcode.mode);
+                }
                 0x69 | 0x65 | 0x75 | 0x6D | 0x7D | 0x79 | 0x61 | 0x71 => {
                     self.adc(&opcode.mode);
+                }
+                0x0A | 0x06 | 0x16 | 0x0E | 0x1E => {
+                    self.asl(&opcode.mode);
                 }
                 0xAA => self.tax(),
                 0x8A => self.txa(),
@@ -357,11 +419,14 @@ mod test {
     #[test]
     fn test_0x6d_adc() {
         let mut cpu = CPU::new();
-        //cpu.register_x = 0xFF;
         cpu.load_and_run(vec![
-            0xA9, 0x01, 0x8d, 0x02, 0x00, 0xa9, 0x0f, 0x6d, 0x02, 0x00, 0x8d, 0x00, 0x00, 0x6d,
-            0x00, 0x00, 0x00,
+            // 0x8000: 0xA9, 0x01   ; LDA #$01   -> A = 0x01
+            // 0x8002: 0x8D, 0x02, 0x00 ; STA $0002  -> メモリ[0x0002] = A (0x01)
+            // 0x8005: 0xA9, 0x0F   ; LDA #$0F   -> A = 0x0F
+            // 0x8007: 0x6D, 0x02, 0x00 ; ADC $0002  -> A = 0x0F + 0x01 + 0 = 0x10
+            // 0x800A: 0x00         ; BRK (ここでプログラム終了)
+            0xA9, 0x01, 0x8d, 0x02, 0x00, 0xa9, 0x0f, 0x6d, 0x02, 0x00, 0x00, // ここが修正
         ]);
-        assert_eq!(cpu.register_a, 0x10);
+        assert_eq!(cpu.register_a, 0x10); // Aレジスタが0x10になっていることを確認
     }
 }
