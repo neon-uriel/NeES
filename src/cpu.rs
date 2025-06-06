@@ -1,5 +1,5 @@
 use crate::opcodes::{self, OpCode};
-use bitflags::bitflags;
+use bitflags::{bitflags, Flags};
 use std::collections::HashMap;
 
 bitflags! {
@@ -21,7 +21,7 @@ bitflags! {
         const INTERRUPT_DISABLE = 0b00000100;
         const DECIMAL_MODE      = 0b00001000;
         const BREAK             = 0b00010000;
-        const BREAK2            = 0b00100000;
+        const BREAK2            = 0b00100000; //reserved(予約済)
         const OVERFLOW          = 0b01000000;
         const NEGATIV           = 0b10000000;
     }
@@ -325,6 +325,133 @@ impl CPU {
         let mem_data = self.mem_read(addr);
         self.compare(self.register_y, mem_data);
     }
+    fn dec(&mut self, mode: &AddressingMode) {
+        let addr = self.get_operand_address(mode);
+        let data = self.mem_read(addr);
+        let res = data.wrapping_sub(1);
+        self.update_zero_and_negative_flags(res);
+        self.mem_write(addr, res);
+    }
+    fn dex(&mut self) {
+        let data = self.register_x;
+        let res = data.wrapping_sub(1);
+        self.update_zero_and_negative_flags(res);
+        self.register_x = res;
+    }
+    fn dey(&mut self) {
+        let data = self.register_y;
+        let res = data.wrapping_sub(1);
+        self.update_zero_and_negative_flags(res);
+        self.register_y = res;
+    }
+
+    fn eor(&mut self, mode: &AddressingMode) {
+        let addr = self.get_operand_address(mode);
+        let value = self.mem_read(addr);
+        let res = self.register_a ^ value;
+        self.update_zero_and_negative_flags(res);
+        self.register_a = res;
+    }
+
+    fn pha(&mut self) {
+        //あやしい
+        self.mem_write(0x0100 as u16 + self.stack_pointer as u16, self.register_a);
+        self.stack_pointer -= 1;
+    }
+
+    fn php(&mut self) {
+        //あやしい
+        self.mem_write(
+            0x0100 as u16 + self.stack_pointer as u16,
+            self.status.bits(),
+        );
+        self.stack_pointer -= 1;
+    }
+
+    fn pla(&mut self) {
+        //あやしい
+        self.stack_pointer += 1;
+        self.register_a = self.mem_read(0x0100 as u16 + self.stack_pointer as u16);
+    }
+
+    fn plp(&mut self) {
+        self.stack_pointer += 1;
+        self.status =
+            CpuFlags::from_bits_truncate(self.mem_read(0x0100 as u16 + self.stack_pointer as u16));
+    }
+
+    fn rol(&mut self, mode: &AddressingMode) {
+        let &mut data;
+        let &mut target_addr;
+        match mode {
+            AddressingMode::Accumulator => {
+                data = self.register_a;
+                target_addr = None;
+            }
+            _ => {
+                let addr = self.get_operand_address(mode);
+                data = self.mem_read(addr);
+                target_addr = Some(addr);
+            }
+        }
+        if (data & 0b1000_0000 > 1){
+            self.status.insert(CpuFlags::CARRY);
+        } else {
+            self.status.remove(CpuFlags::CARRY);
+        }
+        let res = data << 1;
+        self.update_zero_and_negative_flags(res);
+        match target_addr {
+            Some(addr) => {
+                self.mem_write(addr, res);
+            }
+            None => {
+                self.register_a = res;
+            }
+        }
+    }
+
+    fn ror(&mut self, mode: &AddressingMode) {
+        let &mut data;
+        let &mut target_addr;
+        match mode {
+            AddressingMode::Accumulator => {
+                data = self.register_a;
+                target_addr = None;
+            }
+            _ => {
+                let addr = self.get_operand_address(mode);
+                data = self.mem_read(addr);
+                target_addr = Some(addr);
+            }
+        }
+        if (data & 0b0000_0001) > 0{
+            self.status.insert(CpuFlags::CARRY);
+        } else {
+            self.status.remove(CpuFlags::CARRY);
+        }
+        let res = data >> 1;
+        self.update_zero_and_negative_flags(res);
+        match target_addr {
+            Some(addr) => {
+                self.mem_write(addr, res);
+            }
+            None => {
+                self.register_a = res;
+            }
+        }
+    }
+
+    fn rti (&mut self) {
+        self.status = CpuFlags::from_bits_truncate(self.stack_pointer);
+        self.program_counter = self.stack_pointer as u16;
+    }
+
+    fn rts (&mut self) {
+        self.program_counter = self.stack_pointer as u16;
+        self.program_counter += 1;
+    }
+
     fn lda(&mut self, mode: &AddressingMode) {
         let addr = self.get_operand_address(mode);
         let value = self.mem_read(addr);
@@ -398,6 +525,26 @@ impl CPU {
         self.mem_write(addr, self.register_y);
     }
 
+    fn sec (&mut self) {
+        self.status.insert(CpuFlags::CARRY);
+    }
+
+    fn sed (&mut self) {
+        self.status.insert(CpuFlags::DECIMAL_MODE);
+    }
+
+    fn sei (&mut self) {
+        self.status.insert(CpuFlags::INTERRUPT_DISABLE);
+    }
+
+    fn sbc (&mut self, mode: &AddressingMode) {
+        let addr = self.get_operand_address(mode);
+        let value = self.mem_read(addr);
+        let C = self.status.contains(CpuFlags::CARRY) as u8;
+        let res = self.register_a - value - !C;
+        
+    }
+
     fn tax(&mut self) {
         self.register_x = self.register_a;
         self.update_zero_and_negative_flags(self.register_x);
@@ -438,6 +585,24 @@ impl CPU {
         let data = val.wrapping_add(1);
         self.mem_write(addr, data);
         self.update_zero_and_negative_flags(data);
+    }
+
+    fn nop(&mut self) {
+        return;
+    }
+
+    fn jmp(&mut self, mode: &AddressingMode) {
+        //program_counterの下位8bitを渡すのでいいのか？？
+        let addr = self.get_operand_address(mode);
+        let val = self.mem_read(addr);
+        self.program_counter = val as u16;
+    }
+
+    fn jsr(&mut self, mode: &AddressingMode) {
+        let addr = self.get_operand_address(mode);
+        let val = self.mem_read(addr);
+        self.stack_pointer = self.program_counter as u8 + 2;
+        self.program_counter = val as u16;
     }
 
     fn update_zero_and_negative_flags(&mut self, result: u8) {
@@ -533,6 +698,30 @@ impl CPU {
                 0xC0 | 0xC4 | 0xCC => {
                     self.cpy(&opcode.mode);
                 }
+                0xC6 | 0xD6 | 0xCE | 0xDE => {
+                    self.dec(&opcode.mode);
+                }
+                0x49 | 0x45 | 0x55 | 0x4D | 0x5D | 0x59 | 0x41 | 0x51 => {
+                    self.eor(&opcode.mode);
+                }
+                0x4C | 0x6C => {
+                    self.jmp(&opcode.mode);
+                }
+                0xE9 | 0xE5 | 0xF5 | 0xED | 0xFD | 0xF9 | 0xE1 | 0xF1 => {
+                    self.sbc(&opcode.mode);
+                }
+                0x38 => self.sec(),
+                0xF8 => self.sed(),
+                0x78 => self.sei(),
+                0x40 => self.rti(),
+                0x60 => self.rts(),
+                0x48 => self.pha(),
+                0x08 => self.php(),
+                0x68 => self.pla(),
+                0x28 => self.plp(),
+                0x20 => self.jsr(&opcode.mode),
+                0xCA => self.dex(),
+                0x88 => self.dey(),
                 0x90 => self.bcc(),
                 0xB0 => self.bcs(),
                 0xF0 => self.beq(),
@@ -554,6 +743,7 @@ impl CPU {
                 0x9A => self.txs(),
                 0xE8 => self.inx(),
                 0xC8 => self.iny(),
+                0xEA => self.nop(),
                 0xE6 | 0xF6 | 0xEE | 0xFE => {
                     self.inc(&opcode.mode);
                 }
