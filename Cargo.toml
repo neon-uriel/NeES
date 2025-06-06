@@ -8,3 +8,5 @@ edition = "2021"
 [dependencies]
 bitflags = "2.9.1"
 lazy_static = "1.5.0"
+sdl2 = "0.37.0"
+rand = "=0.9.1"

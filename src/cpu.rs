@@ -56,7 +56,7 @@ pub enum AddressingMode {
     NoneAddressing,
 }
 
-trait Mem {
+pub trait Mem {
     fn mem_read(&self, addr: u16) -> u8;
 
     fn mem_write(&mut self, addr: u16, data: u8);
@@ -179,9 +179,10 @@ impl CPU {
 
         self.program_counter = self.mem_read_u16(0xFFFC);
     }
+
     pub fn load(&mut self, program: Vec<u8>) {
-        self.memory[0x8000..(0x8000 + program.len())].copy_from_slice(&program[..]);
-        self.mem_write_u16(0xFFFC, 0x8000);
+        self.memory[0x0600..(0x0600 + program.len())].copy_from_slice(&program[..]);
+        self.mem_write_u16(0xFFFC, 0x0600);
     }
 
     //code writen about opcode
@@ -218,7 +219,7 @@ impl CPU {
 
     fn asl(&mut self, mode: &AddressingMode) {
         let target_addr: Option<u16>;
-        let mut data;
+        let &mut data;
         match mode {
             AddressingMode::Accumulator => {
                 data = self.register_a;
@@ -394,7 +395,7 @@ impl CPU {
                 target_addr = Some(addr);
             }
         }
-        if (data & 0b1000_0000 > 1){
+        if (data & 0b1000_0000 > 1) {
             self.status.insert(CpuFlags::CARRY);
         } else {
             self.status.remove(CpuFlags::CARRY);
@@ -425,7 +426,7 @@ impl CPU {
                 target_addr = Some(addr);
             }
         }
-        if (data & 0b0000_0001) > 0{
+        if (data & 0b0000_0001) > 0 {
             self.status.insert(CpuFlags::CARRY);
         } else {
             self.status.remove(CpuFlags::CARRY);
@@ -442,12 +443,12 @@ impl CPU {
         }
     }
 
-    fn rti (&mut self) {
+    fn rti(&mut self) {
         self.status = CpuFlags::from_bits_truncate(self.stack_pointer);
         self.program_counter = self.stack_pointer as u16;
     }
 
-    fn rts (&mut self) {
+    fn rts(&mut self) {
         self.program_counter = self.stack_pointer as u16;
         self.program_counter += 1;
     }
@@ -525,24 +526,35 @@ impl CPU {
         self.mem_write(addr, self.register_y);
     }
 
-    fn sec (&mut self) {
+    fn sec(&mut self) {
         self.status.insert(CpuFlags::CARRY);
     }
 
-    fn sed (&mut self) {
+    fn sed(&mut self) {
         self.status.insert(CpuFlags::DECIMAL_MODE);
     }
 
-    fn sei (&mut self) {
+    fn sei(&mut self) {
         self.status.insert(CpuFlags::INTERRUPT_DISABLE);
     }
 
-    fn sbc (&mut self, mode: &AddressingMode) {
+    fn sbc(&mut self, mode: &AddressingMode) {
         let addr = self.get_operand_address(mode);
         let value = self.mem_read(addr);
         let C = self.status.contains(CpuFlags::CARRY) as u8;
-        let res = self.register_a - value - !C;
-        
+        let res = self.register_a - value - (1 - C);
+        if !(res < 0) {
+            self.status.insert(CpuFlags::CARRY);
+        } else {
+            self.status.remove(CpuFlags::CARRY);
+        }
+        if ((res ^ self.register_a) & (res ^ !value) & 0x80) > 1 {
+            self.status.insert(CpuFlags::OVERFLOW);
+        } else {
+            self.status.remove(CpuFlags::OVERFLOW);
+        }
+        self.update_zero_and_negative_flags(res);
+        self.register_a = res;
     }
 
     fn tax(&mut self) {
@@ -641,17 +653,137 @@ impl CPU {
     }
 
     pub fn run(&mut self) {
+        self.run_with_callback(|_| {});
         // self.program_counter = 0;
         // I moved init program_counter from here to load function
-        let ref opcodes: HashMap<u8, &'static OpCode> = *opcodes::OPCODES_MAP;
+        // let ref opcodes: HashMap<u8, &'static OpCode> = *opcodes::OPCODES_MAP;
+
+        // loop {
+        // let code = self.mem_read(self.program_counter);
+        // self.program_counter += 1;
+        // let program_counter_state = self.program_counter;
+
+        // let opcode = opcodes
+        //     .get(&code)
+        //     .expect(&format!("OpCode {:x} is not recognized.", code));
+        //     match code {
+        //         0xA9 | 0xA5 | 0xB5 | 0xAD | 0xBD | 0xB9 | 0xA1 | 0xB1 => {
+        //             self.lda(&opcode.mode);
+        //         }
+        //         0xA2 | 0xA6 | 0xB6 | 0xAE | 0xBE => {
+        //             self.ldx(&opcode.mode);
+        //         }
+        //         0xA0 | 0xA4 | 0xB4 | 0xAC | 0xBC => {
+        //             self.ldy(&opcode.mode);
+        //         }
+        //         0x4A | 0x46 | 0x56 | 0x4E | 0x5E => {
+        //             self.lsr(&opcode.mode);
+        //         }
+        //         0x85 | 0x95 | 0x8D | 0x9D | 0x99 | 0x81 | 0x91 => {
+        //             self.sta(&opcode.mode);
+        //         }
+        //         0x86 | 0x96 | 0x8E => {
+        //             self.stx(&opcode.mode);
+        //         }
+        //         0x84 | 0x94 | 0x8C => {
+        //             self.sty(&opcode.mode);
+        //         }
+        //         0x29 | 0x25 | 0x35 | 0x2D | 0x3D | 0x39 | 0x21 | 0x31 => {
+        //             self.and(&opcode.mode);
+        //         }
+        //         0x09 | 0x05 | 0x15 | 0x0D | 0x1D | 0x19 | 0x01 | 0x11 => {
+        //             self.ora(&opcode.mode);
+        //         }
+        //         0x69 | 0x65 | 0x75 | 0x6D | 0x7D | 0x79 | 0x61 | 0x71 => {
+        //             self.adc(&opcode.mode);
+        //         }
+        //         0x0A | 0x06 | 0x16 | 0x0E | 0x1E => {
+        //             self.asl(&opcode.mode);
+        //         }
+        //         0x24 | 0x2C => {
+        //             self.bit(&opcode.mode);
+        //         }
+        //         0xC9 | 0xC5 | 0xD5 | 0xCD | 0xDD | 0xD9 | 0xC1 | 0xD1 => {
+        //             self.cmp(&opcode.mode);
+        //         }
+        //         0xE0 | 0xE4 | 0xEC => {
+        //             self.cpx(&opcode.mode);
+        //         }
+        //         0xC0 | 0xC4 | 0xCC => {
+        //             self.cpy(&opcode.mode);
+        //         }
+        //         0xC6 | 0xD6 | 0xCE | 0xDE => {
+        //             self.dec(&opcode.mode);
+        //         }
+        //         0x49 | 0x45 | 0x55 | 0x4D | 0x5D | 0x59 | 0x41 | 0x51 => {
+        //             self.eor(&opcode.mode);
+        //         }
+        //         0x4C | 0x6C => {
+        //             self.jmp(&opcode.mode);
+        //         }
+        //         0xE9 | 0xE5 | 0xF5 | 0xED | 0xFD | 0xF9 | 0xE1 | 0xF1 => {
+        //             self.sbc(&opcode.mode);
+        //         }
+        //         0x38 => self.sec(),
+        //         0xF8 => self.sed(),
+        //         0x78 => self.sei(),
+        //         0x40 => self.rti(),
+        //         0x60 => self.rts(),
+        //         0x48 => self.pha(),
+        //         0x08 => self.php(),
+        //         0x68 => self.pla(),
+        //         0x28 => self.plp(),
+        //         0x20 => self.jsr(&opcode.mode),
+        //         0xCA => self.dex(),
+        //         0x88 => self.dey(),
+        //         0x90 => self.bcc(),
+        //         0xB0 => self.bcs(),
+        //         0xF0 => self.beq(),
+        //         0x20 => self.bmi(),
+        //         0xD0 => self.bne(),
+        //         0x10 => self.bpl(),
+        //         0x50 => self.bvc(),
+        //         0x70 => self.bvs(),
+        //         0x18 => self.clc(),
+        //         0x58 => self.cli(),
+        //         0xD8 => self.cld(),
+        //         0x58 => self.cli(),
+        //         0xB8 => self.clv(),
+        //         0xAA => self.tax(),
+        //         0x8A => self.txa(),
+        //         0xA8 => self.tay(),
+        //         0x98 => self.tya(),
+        //         0xBA => self.tsx(),
+        //         0x9A => self.txs(),
+        //         0xE8 => self.inx(),
+        //         0xC8 => self.iny(),
+        //         0xEA => self.nop(),
+        //         0xE6 | 0xF6 | 0xEE | 0xFE => {
+        //             self.inc(&opcode.mode);
+        //         }
+        //         0x00 => return,
+        //         _ => todo!(),
+        //     }
+
+        // if program_counter_state == self.program_counter {
+        //     self.program_counter += (opcode.len - 1) as u16;
+        // }
+        // }
+    }
+    pub fn run_with_callback<F>(&mut self, mut callback: F)
+    where
+        F: FnMut(&mut CPU),
+    {
+        let ref opcodes: HashMap<u8, &'static opcodes::OpCode> = *opcodes::OPCODES_MAP;
         loop {
+            println!("デンシャルル");
             let code = self.mem_read(self.program_counter);
             self.program_counter += 1;
             let program_counter_state = self.program_counter;
-
-            let opcode = opcodes
-                .get(&code)
-                .expect(&format!("OpCode {:x} is not recognized.", code));
+            let opcode = opcodes.get(&code).unwrap();
+            // let opcode = opcodes
+            //     .get(&code)
+            //     .expect(&format!("OpCode {:x} is not recognized.", code));
             match code {
                 0xA9 | 0xA5 | 0xB5 | 0xAD | 0xBD | 0xB9 | 0xA1 | 0xB1 => {
                     self.lda(&opcode.mode);
@@ -750,10 +882,10 @@ impl CPU {
                 0x00 => return,
                 _ => todo!(),
             }
-
             if program_counter_state == self.program_counter {
                 self.program_counter += (opcode.len - 1) as u16;
             }
+            callback(self);
         }
     }
 }
