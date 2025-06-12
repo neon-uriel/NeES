@@ -1,4 +1,4 @@
-use crate::opcodes::{self, OpCode};
+use crate::opcodes::{self};
 use bitflags::{bitflags, Flags};
 use std::collections::HashMap;
 
@@ -27,6 +27,9 @@ bitflags! {
     }
 }
 
+const STACK: u16 = 0x0100;
+const STACK_RESET: u8 = 0xfd;
+
 pub struct CPU {
     pub register_a: u8,
     pub register_x: u8,
@@ -47,7 +50,7 @@ pub enum AddressingMode {
     Absolute,
     Absolute_X,
     Absolute_Y,
-    // Indirect,
+    Indirect,
     Indirect_X,
     Indirect_Y,
     Accumulator,
@@ -134,15 +137,15 @@ impl CPU {
                 let hi = self.mem_read(ptr.wrapping_add(1) as u16);
                 (hi as u16) << 8 | (lo as u16)
             }
-            // AddressingMode::Indirect => {
-            //     let base = self.mem_read(self.program_counter);
-            //     let lo = self.mem_read(base as u16);
-            //     let hi = self.mem_read((base as u8).wrapping_add(1) as u16);
-            //     let deref_base = (hi as u16) << 8 | (lo as u16);
-            //     let deref_lo = self.mem_read(deref_base);
-            //     let deref_hi = self.mem_read(deref_base.wrapping_add(1));
-            //     (deref_hi as u16) << 8 | (deref_lo as u16)
-            // }
+            AddressingMode::Indirect => {
+                let base = self.mem_read(self.program_counter);
+                let lo = self.mem_read(base as u16);
+                let hi = self.mem_read((base as u8).wrapping_add(1) as u16);
+                let deref_base = (hi as u16) << 8 | (lo as u16);
+                let deref_lo = self.mem_read(deref_base);
+                let deref_hi = self.mem_read(deref_base.wrapping_add(1));
+                (deref_hi as u16) << 8 | (deref_lo as u16)
+            }
             AddressingMode::Indirect_Y => {
                 let base = self.mem_read(self.program_counter);
                 let lo = self.mem_read(base as u16);
@@ -168,14 +171,16 @@ impl CPU {
 
     pub fn load_and_run(&mut self, program: Vec<u8>) {
         self.load(program);
-        self.reset();
+        self.program_counter = self.mem_read_u16(0xFFFC);
         self.run();
     }
 
     pub fn reset(&mut self) {
         self.register_a = 0;
+        self.register_y = 0;
         self.register_x = 0;
-        self.status = CpuFlags::empty();
+        self.stack_pointer = STACK_RESET;
+        self.status = CpuFlags::from_bits_truncate(0b100100);
 
         self.program_counter = self.mem_read_u16(0xFFFC);
     }
@@ -183,6 +188,25 @@ impl CPU {
     pub fn load(&mut self, program: Vec<u8>) {
         self.memory[0x0600..(0x0600 + program.len())].copy_from_slice(&program[..]);
         self.mem_write_u16(0xFFFC, 0x0600);
+    }
+    fn stack_pop(&mut self) -> u8 {
+        self.stack_pointer = self.stack_pointer.wrapping_add(1);
+        self.mem_read((STACK as u16) + self.stack_pointer as u16)
+    }
+    fn stack_push(&mut self, data: u8) {
+        self.mem_write((STACK as u16) + self.stack_pointer as u16, data);
+        self.stack_pointer = self.stack_pointer.wrapping_sub(1)
+    }
+    fn stack_push_u16(&mut self, data: u16) {
+        let hi = (data >> 8) as u8;
+        let lo = (data & 0xFF) as u8;
+        self.stack_push(hi);
+        self.stack_push(lo);
+    }
+    fn stack_pop_u16(&mut self) -> u16 {
+        let lo = self.stack_pop() as u16;
+        let hi = self.stack_pop() as u16;
+        (hi << 8) | lo
     }
 
     //code writen about opcode
@@ -395,7 +419,7 @@ impl CPU {
                 target_addr = Some(addr);
             }
         }
-        if (data & 0b1000_0000 > 1) {
+        if data & 0b1000_0000 > 1 {
             self.status.insert(CpuFlags::CARRY);
         } else {
             self.status.remove(CpuFlags::CARRY);
@@ -449,8 +473,7 @@ impl CPU {
     }
 
     fn rts(&mut self) {
-        self.program_counter = self.stack_pointer as u16;
-        self.program_counter += 1;
+        self.program_counter = self.stack_pop_u16() + 1;
     }
 
     fn lda(&mut self, mode: &AddressingMode) {
@@ -476,7 +499,7 @@ impl CPU {
 
     fn lsr(&mut self, mode: &AddressingMode) {
         let target_addr: Option<u16>;
-        let mut data;
+        let data;
         match mode {
             AddressingMode::Accumulator => {
                 data = self.register_a;
@@ -604,17 +627,15 @@ impl CPU {
     }
 
     fn jmp(&mut self, mode: &AddressingMode) {
-        //program_counterの下位8bitを渡すのでいいのか？？
         let addr = self.get_operand_address(mode);
-        let val = self.mem_read(addr);
-        self.program_counter = val as u16;
+        let val = self.mem_read_u16(addr);
+        self.program_counter = val;
     }
 
     fn jsr(&mut self, mode: &AddressingMode) {
-        let addr = self.get_operand_address(mode);
-        let val = self.mem_read(addr);
-        self.stack_pointer = self.program_counter as u8 + 2;
-        self.program_counter = val as u16;
+        self.stack_push_u16(self.program_counter + 1);
+        let target_adr = self.mem_read_u16(self.program_counter);
+        self.program_counter = target_adr;
     }
 
     fn update_zero_and_negative_flags(&mut self, result: u8) {
@@ -632,7 +653,7 @@ impl CPU {
     }
 
     fn branch(&mut self, condition: bool) {
-        if (condition) {
+        if condition {
             let jump = self.mem_read(self.program_counter) as i8;
             let jump_addr = self
                 .program_counter
@@ -643,7 +664,7 @@ impl CPU {
     }
 
     fn compare(&mut self, reg_data: u8, mem_data: u8) {
-        let res = reg_data - mem_data;
+        let res = reg_data.wrapping_sub(mem_data);
         if (res >= 0) {
             self.status.insert(CpuFlags::CARRY);
         } else {
@@ -776,7 +797,6 @@ impl CPU {
     {
         let ref opcodes: HashMap<u8, &'static opcodes::OpCode> = *opcodes::OPCODES_MAP;
         loop {
-            println!("デンシャルル");
             let code = self.mem_read(self.program_counter);
             self.program_counter += 1;
             let program_counter_state = self.program_counter;
@@ -784,6 +804,7 @@ impl CPU {
             // let opcode = opcodes
             //     .get(&code)
             //     .expect(&format!("OpCode {:x} is not recognized.", code));
+            println!("デンシャルル:0x{:X}", &code);
             match code {
                 0xA9 | 0xA5 | 0xB5 | 0xAD | 0xBD | 0xB9 | 0xA1 | 0xB1 => {
                     self.lda(&opcode.mode);
@@ -842,6 +863,12 @@ impl CPU {
                 0xE9 | 0xE5 | 0xF5 | 0xED | 0xFD | 0xF9 | 0xE1 | 0xF1 => {
                     self.sbc(&opcode.mode);
                 }
+                0x2A | 0x26 | 0x36 | 0x2E | 0x3E => {
+                    self.rol(&opcode.mode);
+                }
+                0x6A | 0x66 | 0x76 | 0x6E | 0x7E => {
+                    self.ror(&opcode.mode);
+                }
                 0x38 => self.sec(),
                 0xF8 => self.sed(),
                 0x78 => self.sei(),
@@ -857,7 +884,7 @@ impl CPU {
                 0x90 => self.bcc(),
                 0xB0 => self.bcs(),
                 0xF0 => self.beq(),
-                0x20 => self.bmi(),
+                0x30 => self.bmi(),
                 0xD0 => self.bne(),
                 0x10 => self.bpl(),
                 0x50 => self.bvc(),
