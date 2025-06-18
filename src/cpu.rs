@@ -50,6 +50,7 @@ pub enum AddressingMode {
     Absolute,
     Absolute_X,
     Absolute_Y,
+    Absolute_Indirect,
     Indirect,
     Indirect_X,
     Indirect_Y,
@@ -107,6 +108,11 @@ impl CPU {
 
             AddressingMode::Absolute => self.mem_read_u16(self.program_counter),
 
+            AddressingMode::Absolute_Indirect => {
+                let pos = self.mem_read_u16(self.program_counter);
+                let addr = pos.wrapping_add(self.register_x as u16) as u16;
+                addr
+            }
             AddressingMode::ZeroPage_X => {
                 let pos = self.mem_read(self.program_counter);
                 let addr = pos.wrapping_add(self.register_x) as u16;
@@ -564,9 +570,9 @@ impl CPU {
     fn sbc(&mut self, mode: &AddressingMode) {
         let addr = self.get_operand_address(mode);
         let value = self.mem_read(addr);
-        let C = self.status.contains(CpuFlags::CARRY) as u8;
-        let res = self.register_a - value - (1 - C);
-        if !(res < 0) {
+        let c = self.status.contains(CpuFlags::CARRY) as u8;
+        let res = self.register_a.wrapping_sub(value).wrapping_sub(1 - c);
+        if !(res <= 0) {
             self.status.insert(CpuFlags::CARRY);
         } else {
             self.status.remove(CpuFlags::CARRY);
@@ -628,8 +634,8 @@ impl CPU {
 
     fn jmp(&mut self, mode: &AddressingMode) {
         let addr = self.get_operand_address(mode);
-        let val = self.mem_read_u16(addr);
-        self.program_counter = val;
+        // let val = self.mem_read_u16(addr);
+        self.program_counter = addr;
     }
 
     fn jsr(&mut self, mode: &AddressingMode) {
@@ -804,7 +810,7 @@ impl CPU {
             // let opcode = opcodes
             //     .get(&code)
             //     .expect(&format!("OpCode {:x} is not recognized.", code));
-            println!("デンシャルル:0x{:X}", &code);
+            // println!("デンシャルル:0x{:X}", &code);
             match code {
                 0xA9 | 0xA5 | 0xB5 | 0xAD | 0xBD | 0xB9 | 0xA1 | 0xB1 => {
                     self.lda(&opcode.mode);
@@ -892,7 +898,6 @@ impl CPU {
                 0x18 => self.clc(),
                 0x58 => self.cli(),
                 0xD8 => self.cld(),
-                0x58 => self.cli(),
                 0xB8 => self.clv(),
                 0xAA => self.tax(),
                 0x8A => self.txa(),
