@@ -1,6 +1,7 @@
 use crate::opcodes::{self};
 use bitflags::{bitflags, Flags};
 use std::collections::HashMap;
+use crate::bus::Bus;
 
 bitflags! {
     /// # Status Register (P) http://wiki.nesdev.com/w/index.php/Status_flags
@@ -19,7 +20,7 @@ bitflags! {
         const CARRY             = 0b00000001;
         const ZERO              = 0b00000010;
         const INTERRUPT_DISABLE = 0b00000100;
-        const DECIMAL_MODE      = 0b00001000;
+        const DECIMAL_MODE      = 0b00001000; //NESのCPUでは使用されない
         const BREAK             = 0b00010000;
         const BREAK2            = 0b00100000; //reserved(予約済)
         const OVERFLOW          = 0b01000000;
@@ -37,7 +38,7 @@ pub struct CPU {
     pub status: CpuFlags,
     pub program_counter: u16,
     pub stack_pointer: u8,
-    memory: [u8; 0x10000], // 64K memory
+    pub bus: Bus,
 }
 
 #[derive(Debug)]
@@ -62,7 +63,6 @@ pub enum AddressingMode {
 
 pub trait Mem {
     fn mem_read(&self, addr: u16) -> u8;
-
     fn mem_write(&mut self, addr: u16, data: u8);
     fn mem_read_u16(&self, pos: u16) -> u16 {
         let lo = self.mem_read(pos) as u16;
@@ -80,11 +80,11 @@ pub trait Mem {
 
 impl Mem for CPU {
     fn mem_read(&self, addr: u16) -> u8 {
-        self.memory[addr as usize]
+        self.bus.mem_read(addr)
     }
 
     fn mem_write(&mut self, addr: u16, data: u8) {
-        self.memory[addr as usize] = data;
+        self.bus.mem_write(addr, data);
     }
 }
 
@@ -97,7 +97,7 @@ impl CPU {
             status: CpuFlags::empty(),
             program_counter: 0,
             stack_pointer: 0,
-            memory: [0 as u8; 0x10000],
+            bus : Bus::new(),
         }
     }
     fn get_operand_address(&self, mode: &AddressingMode) -> u16 {
@@ -192,7 +192,9 @@ impl CPU {
     }
 
     pub fn load(&mut self, program: Vec<u8>) {
-        self.memory[0x0600..(0x0600 + program.len())].copy_from_slice(&program[..]);
+        for i in 0..(program.len() as u16) {
+            self.mem_write(i, program[i as usize]);
+        }
         self.mem_write_u16(0xFFFC, 0x0600);
     }
     fn stack_pop(&mut self) -> u8 {
@@ -571,20 +573,21 @@ impl CPU {
         let addr = self.get_operand_address(mode);
         let value = self.mem_read(addr);
         let c = self.status.contains(CpuFlags::CARRY) as u8;
-        let res = self.register_a.wrapping_sub(value).wrapping_sub(1 - c);
-        if !(res <= 0) {
+        let res = self.register_a.wrapping_sub(value).wrapping_sub((1-c));
+        println!("SBC: res:{:X}, value:{:X}, c:{:X}", res, value, c);
+        if !(self.register_a < (value + (1-c))) {
             self.status.insert(CpuFlags::CARRY);
         } else {
             self.status.remove(CpuFlags::CARRY);
         }
-        if ((res ^ self.register_a) & (res ^ !value) & 0x80) > 1 {
+        if ((res ^ self.register_a) & (res ^ value) & 0x80) != 0 {
             self.status.insert(CpuFlags::OVERFLOW);
         } else {
             self.status.remove(CpuFlags::OVERFLOW);
         }
         self.update_zero_and_negative_flags(res);
         self.register_a = res;
-    }
+    } //this function has a bug
 
     fn tax(&mut self) {
         self.register_x = self.register_a;
