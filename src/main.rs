@@ -3,14 +3,13 @@ pub mod opcodes;
 pub mod bus;
 use cpu::Mem;
 use cpu::CPU;
+use bus::Bus;
 use rand::Rng;
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use sdl2::pixels::Color;
 use sdl2::pixels::PixelFormatEnum;
 use sdl2::EventPump;
-
-use crate::bus::Bus;
 
 #[macro_use]
 extern crate lazy_static;

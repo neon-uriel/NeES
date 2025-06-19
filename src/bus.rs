@@ -1,4 +1,5 @@
 use crate::cpu::Mem;
+
 //  _______________ $10000  _______________
 // | PRG-ROM       |       |               |
 // | Upper Bank    |       |               |
@@ -32,11 +33,11 @@ const PPU_REGISTERS: u16 = 0x2000;
 const PPU_REGISTERS_MIRRORS_END: u16 = 0x3FFF;
 
 pub struct Bus {
-    cpu_vram:[u8; 2048]
+    cpu_vram: [u8; 2048]
 }
 
 impl Bus {
-    pub fn new() -> Self {
+    pub fn new() -> Self{
         Bus {
             cpu_vram: [0; 2048]
         }
@@ -52,7 +53,7 @@ impl Mem for Bus {
             }
             PPU_REGISTERS ..= PPU_REGISTERS_MIRRORS_END => {
                 let _mirror_down_addr = addr & 0b00100000_00000111;
-                todo!("PPUまだ実装していません");
+                todo!("PPU is not supported yet")
             }
             _ => {
                 println!("Ignoring mem access at {}", addr);
@@ -61,7 +62,7 @@ impl Mem for Bus {
         }
     }
 
-    fn mem_write(&mut self, addr: u16 , data: u8) {
+    fn mem_write(&mut self, addr: u16, data: u8) {
         match addr {
             RAM ..= RAM_MIRRORS_END => {
                 let mirror_down_addr = addr & 0b11111111111;
@@ -69,7 +70,7 @@ impl Mem for Bus {
             }
             PPU_REGISTERS ..= PPU_REGISTERS_MIRRORS_END => {
                 let _mirror_down_addr = addr & 0b00100000_00000111;
-                todo!("PPUまだ実装していません");
+                todo!("PPU is not supported yet");
             }
             _ => {
                 println!("Ignoring mem write-access at {}", addr);

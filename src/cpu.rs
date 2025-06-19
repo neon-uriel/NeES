@@ -100,9 +100,9 @@ impl CPU {
             register_a: 0,
             register_x: 0,
             register_y: 0,
-            status: CpuFlags::empty(),
+            status: CpuFlags::from_bits_truncate(0b100100),
             program_counter: 0,
-            stack_pointer: 0,
+            stack_pointer: STACK_RESET,
             bus : bus,
         }
     }
@@ -199,7 +199,7 @@ impl CPU {
 
     pub fn load(&mut self, program: Vec<u8>) {
         for i in 0..(program.len() as u16) {
-            self.mem_write(i, program[i as usize]);
+            self.mem_write(0x0000 + i, program[i as usize]);
         }
         self.mem_write_u16(0xFFFC, 0x0000);
     }
@@ -700,11 +700,11 @@ impl CPU {
             let code = self.mem_read(self.program_counter);
             self.program_counter += 1;
             let program_counter_state = self.program_counter;
-            let opcode = opcodes.get(&code).unwrap();
-            // let opcode = opcodes
-            //     .get(&code)
-            //     .expect(&format!("OpCode {:x} is not recognized.", code));
-            // println!("デンシャルル:0x{:X}", &code);
+            // let opcode = opcodes.get(&code).unwrap();
+            let opcode = opcodes
+                .get(&code)
+                .expect(&format!("OpCode {:x} is not recognized.", code));
+            println!("デンシャルル:0x{:X}", &code);
             match code {
                 0xA9 | 0xA5 | 0xB5 | 0xAD | 0xBD | 0xB9 | 0xA1 | 0xB1 => {
                     self.lda(&opcode.mode);
@@ -818,7 +818,6 @@ impl CPU {
 
 #[cfg(test)]
 mod test {
-    use crate::bus;
 
     use super::*;
     #[test]
