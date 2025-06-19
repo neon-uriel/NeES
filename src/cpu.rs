@@ -819,10 +819,13 @@ impl CPU {
 #[cfg(test)]
 mod test {
 
+    use crate::cartridge::Rom;
+
     use super::*;
     #[test]
     fn test_lda_from_memory() {
-        let bus = Bus::new();
+        let rom = Rom::new(&vec![]).unwrap();
+        let bus = Bus::new(rom);
         let mut cpu = CPU::new(bus);
         cpu.mem_write(0x10, 0x55);
 
@@ -833,7 +836,8 @@ mod test {
 
     #[test]
     fn test_0xa9_lda_immediate_load_data() {
-        let bus = Bus::new();
+        let rom = Rom::new(&vec![]).unwrap();
+        let bus = Bus::new(rom);
         let mut cpu = CPU::new(bus);
         cpu.load_and_run(vec![0xA9, 0x05, 0x00]);
         assert_eq!(cpu.register_a, 0x05);
@@ -842,35 +846,40 @@ mod test {
     }
     #[test]
     fn test_0xa9_lda_zero_flag() {
-        let bus = Bus::new();
+        let rom = Rom::new(&vec![]).unwrap();
+        let bus = Bus::new(rom);
         let mut cpu = CPU::new(bus);
         cpu.load_and_run(vec![0xA9, 0x00, 0x00]);
         assert!(cpu.status.contains(CpuFlags::ZERO));
     }
     #[test]
     fn test_0xaa_tax_move_a_to_x() {
-        let bus = Bus::new();
+        let rom = Rom::new(&vec![]).unwrap();
+        let bus = Bus::new(rom);
         let mut cpu = CPU::new(bus);
         cpu.load_and_run(vec![0xA9, 0x0A, 0xAA, 0x00]);
         assert_eq!(cpu.register_x, 10);
     }
     #[test]
     fn test_0xe8_inx_increment_x() {
-        let bus = Bus::new();
+        let rom = Rom::new(&vec![]).unwrap();
+        let bus = Bus::new(rom);
         let mut cpu = CPU::new(bus);
         cpu.load_and_run(vec![0xA9, 0x0A, 0xAA, 0xE8, 0x00]);
         assert_eq!(cpu.register_x, 11);
     }
     #[test]
     fn test_5_ops_working_togather() {
-        let bus = Bus::new();
+        let rom = Rom::new(&vec![0xA9, 0xC0, 0xAA, 0xE8, 0x00]).unwrap();
+        let bus = Bus::new(rom);
         let mut cpu = CPU::new(bus);
         cpu.load_and_run(vec![0xA9, 0xC0, 0xAA, 0xE8, 0x00]);
         assert_eq!(cpu.register_x, 0xC1);
     }
     #[test]
     fn test_inx_overflow() {
-        let bus = Bus::new();
+        let rom = Rom::new(&vec![]).unwrap();
+        let bus = Bus::new(rom);
         let mut cpu = CPU::new(bus);
         //cpu.register_x = 0xFF;
         cpu.load_and_run(vec![0xA9, 0xFF, 0xAA, 0xE8, 0xE8, 0x00]);
@@ -878,7 +887,8 @@ mod test {
     }
     #[test]
     fn test_and_zeroflag() {
-        let bus = Bus::new();
+        let rom = Rom::new(&vec![]).unwrap();
+        let bus = Bus::new(rom);
         let mut cpu = CPU::new(bus);
         //cpu.register_x = 0xFF;
         cpu.load_and_run(vec![0xA9, 0x00, 0x29, 0x01]);
@@ -886,7 +896,8 @@ mod test {
     }
     #[test]
     fn test_0xa9_and() {
-        let bus = Bus::new();
+        let rom = Rom::new(&vec![]).unwrap();
+        let bus = Bus::new(rom);
         let mut cpu = CPU::new(bus);
         //cpu.register_x = 0xFF;
         cpu.load_and_run(vec![0xA9, 0xFF, 0x29, 0x01]);
@@ -894,7 +905,8 @@ mod test {
     }
     #[test]
     fn test_0x6d_adc() {
-        let bus = Bus::new();
+        let rom = Rom::new(&vec![]).unwrap();
+        let bus = Bus::new(rom);
         let mut cpu = CPU::new(bus);
         cpu.load_and_run(vec![
             // 0x8000: 0xA9, 0x01   ; LDA #$01   -> A = 0x01
