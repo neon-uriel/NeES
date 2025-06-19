@@ -1,7 +1,7 @@
-use crate::opcodes::{self};
-use bitflags::{bitflags, Flags};
-use std::collections::HashMap;
+use crate::opcodes;
 use crate::bus::Bus;
+use bitflags::{bitflags};
+use std::collections::HashMap;
 
 bitflags! {
     /// # Status Register (P) http://wiki.nesdev.com/w/index.php/Status_flags
@@ -86,10 +86,16 @@ impl Mem for CPU {
     fn mem_write(&mut self, addr: u16, data: u8) {
         self.bus.mem_write(addr, data);
     }
+    fn mem_read_u16(&self, pos: u16) -> u16 {
+        self.bus.mem_read_u16(pos)
+    }
+    fn mem_write_u16(&mut self, pos: u16, data: u16) {
+        self.bus.mem_write_u16(pos, data);
+    }
 }
 
 impl CPU {
-    pub fn new() -> Self {
+    pub fn new(bus: Bus) -> Self {
         CPU {
             register_a: 0,
             register_x: 0,
@@ -97,7 +103,7 @@ impl CPU {
             status: CpuFlags::empty(),
             program_counter: 0,
             stack_pointer: 0,
-            bus : Bus::new(),
+            bus : bus,
         }
     }
     fn get_operand_address(&self, mode: &AddressingMode) -> u16 {
@@ -195,7 +201,7 @@ impl CPU {
         for i in 0..(program.len() as u16) {
             self.mem_write(i, program[i as usize]);
         }
-        self.mem_write_u16(0xFFFC, 0x0600);
+        self.mem_write_u16(0xFFFC, 0x0000);
     }
     fn stack_pop(&mut self) -> u8 {
         self.stack_pointer = self.stack_pointer.wrapping_add(1);
@@ -573,7 +579,7 @@ impl CPU {
         let addr = self.get_operand_address(mode);
         let value = self.mem_read(addr);
         let c = self.status.contains(CpuFlags::CARRY) as u8;
-        let res = self.register_a.wrapping_sub(value).wrapping_sub((1-c));
+        let res = self.register_a.wrapping_sub(value).wrapping_sub(1-c);
         println!("SBC: res:{:X}, value:{:X}, c:{:X}", res, value, c);
         if !(self.register_a < (value + (1-c))) {
             self.status.insert(CpuFlags::CARRY);
@@ -641,7 +647,7 @@ impl CPU {
         self.program_counter = addr;
     }
 
-    fn jsr(&mut self, mode: &AddressingMode) {
+    fn jsr(&mut self) {
         self.stack_push_u16(self.program_counter + 1);
         let target_adr = self.mem_read_u16(self.program_counter);
         self.program_counter = target_adr;
@@ -674,7 +680,7 @@ impl CPU {
 
     fn compare(&mut self, reg_data: u8, mem_data: u8) {
         let res = reg_data.wrapping_sub(mem_data);
-        if (res >= 0) {
+        if reg_data > mem_data {
             self.status.insert(CpuFlags::CARRY);
         } else {
             self.status.remove(CpuFlags::CARRY);
@@ -684,121 +690,6 @@ impl CPU {
 
     pub fn run(&mut self) {
         self.run_with_callback(|_| {});
-        // self.program_counter = 0;
-        // I moved init program_counter from here to load function
-        // let ref opcodes: HashMap<u8, &'static OpCode> = *opcodes::OPCODES_MAP;
-
-        // loop {
-        // let code = self.mem_read(self.program_counter);
-        // self.program_counter += 1;
-        // let program_counter_state = self.program_counter;
-
-        // let opcode = opcodes
-        //     .get(&code)
-        //     .expect(&format!("OpCode {:x} is not recognized.", code));
-        //     match code {
-        //         0xA9 | 0xA5 | 0xB5 | 0xAD | 0xBD | 0xB9 | 0xA1 | 0xB1 => {
-        //             self.lda(&opcode.mode);
-        //         }
-        //         0xA2 | 0xA6 | 0xB6 | 0xAE | 0xBE => {
-        //             self.ldx(&opcode.mode);
-        //         }
-        //         0xA0 | 0xA4 | 0xB4 | 0xAC | 0xBC => {
-        //             self.ldy(&opcode.mode);
-        //         }
-        //         0x4A | 0x46 | 0x56 | 0x4E | 0x5E => {
-        //             self.lsr(&opcode.mode);
-        //         }
-        //         0x85 | 0x95 | 0x8D | 0x9D | 0x99 | 0x81 | 0x91 => {
-        //             self.sta(&opcode.mode);
-        //         }
-        //         0x86 | 0x96 | 0x8E => {
-        //             self.stx(&opcode.mode);
-        //         }
-        //         0x84 | 0x94 | 0x8C => {
-        //             self.sty(&opcode.mode);
-        //         }
-        //         0x29 | 0x25 | 0x35 | 0x2D | 0x3D | 0x39 | 0x21 | 0x31 => {
-        //             self.and(&opcode.mode);
-        //         }
-        //         0x09 | 0x05 | 0x15 | 0x0D | 0x1D | 0x19 | 0x01 | 0x11 => {
-        //             self.ora(&opcode.mode);
-        //         }
-        //         0x69 | 0x65 | 0x75 | 0x6D | 0x7D | 0x79 | 0x61 | 0x71 => {
-        //             self.adc(&opcode.mode);
-        //         }
-        //         0x0A | 0x06 | 0x16 | 0x0E | 0x1E => {
-        //             self.asl(&opcode.mode);
-        //         }
-        //         0x24 | 0x2C => {
-        //             self.bit(&opcode.mode);
-        //         }
-        //         0xC9 | 0xC5 | 0xD5 | 0xCD | 0xDD | 0xD9 | 0xC1 | 0xD1 => {
-        //             self.cmp(&opcode.mode);
-        //         }
-        //         0xE0 | 0xE4 | 0xEC => {
-        //             self.cpx(&opcode.mode);
-        //         }
-        //         0xC0 | 0xC4 | 0xCC => {
-        //             self.cpy(&opcode.mode);
-        //         }
-        //         0xC6 | 0xD6 | 0xCE | 0xDE => {
-        //             self.dec(&opcode.mode);
-        //         }
-        //         0x49 | 0x45 | 0x55 | 0x4D | 0x5D | 0x59 | 0x41 | 0x51 => {
-        //             self.eor(&opcode.mode);
-        //         }
-        //         0x4C | 0x6C => {
-        //             self.jmp(&opcode.mode);
-        //         }
-        //         0xE9 | 0xE5 | 0xF5 | 0xED | 0xFD | 0xF9 | 0xE1 | 0xF1 => {
-        //             self.sbc(&opcode.mode);
-        //         }
-        //         0x38 => self.sec(),
-        //         0xF8 => self.sed(),
-        //         0x78 => self.sei(),
-        //         0x40 => self.rti(),
-        //         0x60 => self.rts(),
-        //         0x48 => self.pha(),
-        //         0x08 => self.php(),
-        //         0x68 => self.pla(),
-        //         0x28 => self.plp(),
-        //         0x20 => self.jsr(&opcode.mode),
-        //         0xCA => self.dex(),
-        //         0x88 => self.dey(),
-        //         0x90 => self.bcc(),
-        //         0xB0 => self.bcs(),
-        //         0xF0 => self.beq(),
-        //         0x20 => self.bmi(),
-        //         0xD0 => self.bne(),
-        //         0x10 => self.bpl(),
-        //         0x50 => self.bvc(),
-        //         0x70 => self.bvs(),
-        //         0x18 => self.clc(),
-        //         0x58 => self.cli(),
-        //         0xD8 => self.cld(),
-        //         0x58 => self.cli(),
-        //         0xB8 => self.clv(),
-        //         0xAA => self.tax(),
-        //         0x8A => self.txa(),
-        //         0xA8 => self.tay(),
-        //         0x98 => self.tya(),
-        //         0xBA => self.tsx(),
-        //         0x9A => self.txs(),
-        //         0xE8 => self.inx(),
-        //         0xC8 => self.iny(),
-        //         0xEA => self.nop(),
-        //         0xE6 | 0xF6 | 0xEE | 0xFE => {
-        //             self.inc(&opcode.mode);
-        //         }
-        //         0x00 => return,
-        //         _ => todo!(),
-        //     }
-
-        // if program_counter_state == self.program_counter {
-        //     self.program_counter += (opcode.len - 1) as u16;
-        // }
-        // }
     }
     pub fn run_with_callback<F>(&mut self, mut callback: F)
     where
@@ -887,7 +778,7 @@ impl CPU {
                 0x08 => self.php(),
                 0x68 => self.pla(),
                 0x28 => self.plp(),
-                0x20 => self.jsr(&opcode.mode),
+                0x20 => self.jsr(),
                 0xCA => self.dex(),
                 0x88 => self.dey(),
                 0x90 => self.bcc(),
@@ -927,10 +818,13 @@ impl CPU {
 
 #[cfg(test)]
 mod test {
+    use crate::bus;
+
     use super::*;
     #[test]
     fn test_lda_from_memory() {
-        let mut cpu = CPU::new();
+        let bus = Bus::new();
+        let mut cpu = CPU::new(bus);
         cpu.mem_write(0x10, 0x55);
 
         cpu.load_and_run(vec![0xa5, 0x10, 0x00]);
@@ -940,7 +834,8 @@ mod test {
 
     #[test]
     fn test_0xa9_lda_immediate_load_data() {
-        let mut cpu = CPU::new();
+        let bus = Bus::new();
+        let mut cpu = CPU::new(bus);
         cpu.load_and_run(vec![0xA9, 0x05, 0x00]);
         assert_eq!(cpu.register_a, 0x05);
         assert!(!cpu.status.contains(CpuFlags::ZERO));
@@ -948,52 +843,60 @@ mod test {
     }
     #[test]
     fn test_0xa9_lda_zero_flag() {
-        let mut cpu = CPU::new();
+        let bus = Bus::new();
+        let mut cpu = CPU::new(bus);
         cpu.load_and_run(vec![0xA9, 0x00, 0x00]);
         assert!(cpu.status.contains(CpuFlags::ZERO));
     }
     #[test]
     fn test_0xaa_tax_move_a_to_x() {
-        let mut cpu = CPU::new();
+        let bus = Bus::new();
+        let mut cpu = CPU::new(bus);
         cpu.load_and_run(vec![0xA9, 0x0A, 0xAA, 0x00]);
         assert_eq!(cpu.register_x, 10);
     }
     #[test]
     fn test_0xe8_inx_increment_x() {
-        let mut cpu = CPU::new();
+        let bus = Bus::new();
+        let mut cpu = CPU::new(bus);
         cpu.load_and_run(vec![0xA9, 0x0A, 0xAA, 0xE8, 0x00]);
         assert_eq!(cpu.register_x, 11);
     }
     #[test]
     fn test_5_ops_working_togather() {
-        let mut cpu = CPU::new();
+        let bus = Bus::new();
+        let mut cpu = CPU::new(bus);
         cpu.load_and_run(vec![0xA9, 0xC0, 0xAA, 0xE8, 0x00]);
         assert_eq!(cpu.register_x, 0xC1);
     }
     #[test]
     fn test_inx_overflow() {
-        let mut cpu = CPU::new();
+        let bus = Bus::new();
+        let mut cpu = CPU::new(bus);
         //cpu.register_x = 0xFF;
         cpu.load_and_run(vec![0xA9, 0xFF, 0xAA, 0xE8, 0xE8, 0x00]);
         assert_eq!(cpu.register_x, 1);
     }
     #[test]
     fn test_and_zeroflag() {
-        let mut cpu = CPU::new();
+        let bus = Bus::new();
+        let mut cpu = CPU::new(bus);
         //cpu.register_x = 0xFF;
         cpu.load_and_run(vec![0xA9, 0x00, 0x29, 0x01]);
         assert!(cpu.status.contains(CpuFlags::ZERO));
     }
     #[test]
     fn test_0xa9_and() {
-        let mut cpu = CPU::new();
+        let bus = Bus::new();
+        let mut cpu = CPU::new(bus);
         //cpu.register_x = 0xFF;
         cpu.load_and_run(vec![0xA9, 0xFF, 0x29, 0x01]);
         assert_eq!(cpu.register_a, 0x01);
     }
     #[test]
     fn test_0x6d_adc() {
-        let mut cpu = CPU::new();
+        let bus = Bus::new();
+        let mut cpu = CPU::new(bus);
         cpu.load_and_run(vec![
             // 0x8000: 0xA9, 0x01   ; LDA #$01   -> A = 0x01
             // 0x8002: 0x8D, 0x02, 0x00 ; STA $0002  -> メモリ[0x0002] = A (0x01)

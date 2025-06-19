@@ -1,5 +1,6 @@
 pub mod cpu;
 pub mod opcodes;
+pub mod bus;
 use cpu::Mem;
 use cpu::CPU;
 use rand::Rng;
@@ -8,6 +9,8 @@ use sdl2::keyboard::Keycode;
 use sdl2::pixels::Color;
 use sdl2::pixels::PixelFormatEnum;
 use sdl2::EventPump;
+
+use crate::bus::Bus;
 
 #[macro_use]
 extern crate lazy_static;
@@ -127,9 +130,11 @@ fn main() {
     ];
 
     //load the game
-    let mut cpu = CPU::new();
+    let bus = Bus::new();
+    let mut cpu = CPU::new(bus);
     cpu.load(game_code);
     cpu.reset();
+    cpu.program_counter = 0x0600;
 
     let mut screen_state = [0 as u8; 32 * 3 * 32];
     let mut rng = rand::thread_rng();
